@@ -22,7 +22,7 @@ class SimpleSVClustering:
     kernel = None
     kargs = ()
     tolerance = None
-    verbose = True
+    verbose = False
 
     def __init__(self,
                  C,
@@ -48,8 +48,12 @@ class SimpleSVClustering:
         It returns True if a and b are connected by a high probability region, false otherwise.
         NOTE: authors originally suggested 20 segments but that is SLOOOOOW, so we use 5. In practice it is pretty good.
         """
-        test = [bool(self._predict(i*a + (1-i)*b) <= self.b) for i in numpy.arange(1.0/n_checks,1.0,1.0/n_checks)]
-        return not False in test
+        for i in numpy.arange(1.0/n_checks,1.0,1.0/n_checks):
+            if self._predict(i*a + (1-i)*b) > self.b:
+                return False
+        return True
+        #test = [bool(self._predict(i*a + (1-i)*b) <= self.b) for i in numpy.arange(1.0/n_checks,1.0,1.0/n_checks)]
+        #return not False in test
 
     def _getAllClasses(self, X):
         """
@@ -57,35 +61,23 @@ class SimpleSVClustering:
         TODO: The outputs of this should really be saved in order to embed new points into the clusters.
         """
 
-        #1: build the connectivity matrix
-        connected = numpy.eye(len(X),dtype=numpy.uint8)
-        print connected.shape
-        for i in xrange(len(connected)):
-            checked = []
-            for j in xrange(i+1,len(connected)):
-                if (not connected[i][j]) and self._checkClass(X[i,:],X[j,:]):
-                    connected[i,j] = 1
-                    checked.append(j)
-
-            #this propagates new connections through to all cluster nodes so that each node is connected to all others in its component set
-            #TODO: using this idea, implement some nice optimisations
-            #for c in checked:
-            for c in xrange(0,len(X)):
-                if connected[i,c]:
-                    connected[c,:] |= connected[i,:]
-
-        #2: find the cluster components be removing a connected segment at a time
+        #1: build the connected clusters
+        unvisited = range(len(X))
         clusters = []
-        used = numpy.zeros(len(X),dtype=numpy.uint8)
-        cnt = 0
-        while cnt < len(X):
-            clusters.append(numpy.where(connected[cnt,:])[0])
-            if len(clusters[-1]) == 1:
-                clusters.pop(-1)
-            used |= connected[cnt,:]
-            while cnt < len(X) and used[cnt] == 1:
-                cnt += 1
-
+        while len(unvisited):
+            #create a new cluster with the first unvisited node
+            c = [unvisited[0]]
+            unvisited.pop(0)
+            i = 0
+            while i < len(c) and len(unvisited):
+                #for all nodes in the cluster, add all connected unvisited nodes and remove them fromt he unvisited list
+                unvisitedNew = []
+                for j in unvisited:
+                    (c if self._checkClass(X[c[i],:],X[j,:]) else unvisitedNew).append(j)
+                unvisited = unvisitedNew
+                i += 1
+            clusters.append(c)
+        
         #3: group components by classification
         classifications = numpy.zeros(len(X))-1
         for i in xrange(len(clusters)):
@@ -135,7 +127,6 @@ class SimpleSVClustering:
         #get the data for support vectors
         Qshrunk = Q[self.a >= self.C/100.,:][:,self.a >= self.C/100.]
         self.sv = X[self.a >= self.C/100., :]
-        print self.a
         self.a = (self.a)[self.a >= self.C/100.]
 
         #Do an all-pairs contour check
@@ -183,7 +174,6 @@ class SimpleSVClustering:
 
 if __name__ == '__main__':
     import sklearn.datasets
-    import sklearn.datasets
     data,labels = sklearn.datasets.make_moons(400,noise=0.01,random_state=0)
     data -= numpy.mean(data,axis=0)
 
@@ -195,6 +185,8 @@ if __name__ == '__main__':
     #check assigned classes for the two moons as a classification error
     t = clss.predict(data)
     print "Error", numpy.sum((labels-t)**2) / float(len(data))
+    
+    
     from matplotlib import pyplot
 
     #generate a heatmap and display classified clusters.
@@ -209,3 +201,4 @@ if __name__ == '__main__':
     pyplot.scatter(data[t==1,0],data[t==1,1],c='b')
 
     pyplot.show()
+    
