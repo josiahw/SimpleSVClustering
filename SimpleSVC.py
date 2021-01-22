@@ -20,7 +20,6 @@ class SimpleSVClustering:
     C = None
     sv = None
     kernel = None
-    kargs = ()
     tolerance = None
     verbose = False
 
@@ -28,20 +27,21 @@ class SimpleSVClustering:
                  C,
                  tolerance = 0.001,
                  kernel = numpy.dot,
-                 kargs = ()
+                 **kwargs
                  ):
         """
         The parameters are:
          - C: SVC cost
          - tolerance: gradient descent solution accuracy
-         - kernel: the kernel function do use as k(a, b, *kargs)
-         - kargs: extra parameters for the kernel
+         - kernel: the kernel function do use as k(a, b, *kwargs)
+         - kwargs: extra parameters for the kernel
         """
         self.C = C
         self.kernel = kernel
         self.tolerance = tolerance
-        self.kargs = kargs
-
+        self.kwargs = kwargs
+        print(self.kwargs)
+        
     def _checkClass(self, a, b, n_checks = 5):
         """
         This does a straight line interpolation between a and b, using n_checks number of segments.
@@ -62,7 +62,7 @@ class SimpleSVClustering:
         """
 
         #1: build the connected clusters
-        unvisited = range(len(X))
+        unvisited = list(range(len(X)))
         clusters = []
         while len(unvisited):
             #create a new cluster with the first unvisited node
@@ -80,11 +80,10 @@ class SimpleSVClustering:
         
         #3: group components by classification
         classifications = numpy.zeros(len(X))-1
-        for i in xrange(len(clusters)):
+        for i in range(len(clusters)):
             for c in clusters[i]:
                 classifications[c] = i
         return classifications
-
 
     def fit(self, X):
         """
@@ -94,16 +93,12 @@ class SimpleSVClustering:
         """
         Construct the Q matrix for solving
         """
-        Q = numpy.zeros((len(data),len(data)))
-        for i in xrange(len(data)):
-            for j in xrange(i,len(data)):
+        Q = numpy.zeros((len(X),len(X)))
+        for i in range(len(X)):
+            for j in range(i,len(X)):
                 Qval = 1.
-                Qval *= self.kernel(*(
-                                (data[i,:], data[j,:])
-                                + self.kargs
-                                ))
+                Qval *= self.kernel(*((X[i,:], X[j,:])), **self.kwargs)
                 Q[i,j] = Q[j,i] = Qval
-
 
         """
         Solve for a and w simultaneously by coordinate descent.
@@ -115,14 +110,14 @@ class SimpleSVClustering:
         delta = 10000000000.0
         while delta > self.tolerance:
             delta = 0.
-            for i in xrange(len(data)):
+            for i in range(len(X)):
                 g = numpy.dot(Q[i,:], self.a) - Q[i,i]
                 adelta = self.a[i] - min(max(self.a[i] - g/Q[i,i], 0.0), self.C)
                 self.w += adelta * X[i,:]
                 delta += abs(adelta)
                 self.a[i] -= adelta
             if self.verbose:
-                print "Descent step magnitude:", delta
+                print ("Descent step magnitude:", delta)
 
         #get the data for support vectors
         Qshrunk = Q[self.a >= self.C/100.,:][:,self.a >= self.C/100.]
@@ -132,14 +127,14 @@ class SimpleSVClustering:
         #Do an all-pairs contour check
 
         #calculate the contribution of all SVs
-        for i in xrange(len(self.a)):
-            for j in xrange(len(self.a)):
+        for i in range(len(self.a)):
+            for j in range(len(self.a)):
                 Qshrunk[i,j] *= self.a[i]*self.a[j]
 
         #this is needed for radius calculation apparently
         self.bOffset = numpy.sum(numpy.sum(Qshrunk))
         if self.verbose:
-            print "Number of support vectors:", len(self.a)
+            print ("Number of support vectors:", len(self.a))
 
         """
         Select support vectors and solve for b to get the final classifier
@@ -148,7 +143,7 @@ class SimpleSVClustering:
 
 
         if self.verbose:
-            print "Bias value:", self.b
+            print ("Bias value:", self.b)
 
     def _predict(self, X):
         """
@@ -157,10 +152,11 @@ class SimpleSVClustering:
         if (len(X.shape) < 2):
             X = X.reshape((1,-1))
         clss = numpy.zeros(len(X))
-        for i in xrange(len(X)):
-            clss[i] += self.kernel(* ((X[i,:],X[i,:]) + self.kargs))
-            for j in xrange(len(self.sv)):
-                clss[i] -= 2 * self.a[j] * self.kernel(* ((self.sv[j,:],X[i,:]) + self.kargs))
+        for i in range(len(X)):
+            clss[i] += self.kernel(* ((X[i,:],X[i,:])), **self.kwargs)
+            for j in range(len(self.sv)):
+                clss[i] -= 2 * self.a[j] * self.kernel(* ((self.sv[j,:],X[i,:])), **self.kwargs)
+                
         return (clss+self.bOffset)**0.5
 
     def predict(self, X):
@@ -184,15 +180,15 @@ if __name__ == '__main__':
 
     #check assigned classes for the two moons as a classification error
     t = clss.predict(data)
-    print "Error", numpy.sum((labels-t)**2) / float(len(data))
+    print ("Error", numpy.sum((labels-t)**2) / float(len(data)))
     
     
     from matplotlib import pyplot
 
     #generate a heatmap and display classified clusters.
     a = numpy.zeros((100,100))
-    for i in xrange(100):
-        for j in xrange(100):
+    for i in range(100):
+        for j in range(100):
             a[j,i] = clss._predict(numpy.array([i*4/100.-2,j*4/100.-2]))
     pyplot.imshow(a, cmap='hot', interpolation='nearest')
     data *= 25.
