@@ -8,10 +8,12 @@ import numpy
 import numpy.linalg
 
 def polyKernel(a,b,pwr):
-    return numpy.dot(a,b)**pwr #numpy.dot(a,a) - numpy.dot(b,b) # -1 #
+    return numpy.dot(a,b.T)**pwr
 
 def rbfKernel(a,b,gamma):
-    return numpy.exp(-gamma * numpy.linalg.norm(a - b))
+    if len(a.shape) == 2:
+        return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=1))
+    return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=0))
 
 class SimpleSVClustering:
     w = None
@@ -40,9 +42,8 @@ class SimpleSVClustering:
         self.kernel = kernel
         self.tolerance = tolerance
         self.kwargs = kwargs
-        print(self.kwargs)
-        
-    def _checkClass(self, a, b, n_checks = 5):
+
+    def _checkClass(self, a, b, n_checks = 8):
         """
         This does a straight line interpolation between a and b, using n_checks number of segments.
         It returns True if a and b are connected by a high probability region, false otherwise.
@@ -52,8 +53,6 @@ class SimpleSVClustering:
             if self._predict(i*a + (1-i)*b) > self.b:
                 return False
         return True
-        #test = [bool(self._predict(i*a + (1-i)*b) <= self.b) for i in numpy.arange(1.0/n_checks,1.0,1.0/n_checks)]
-        #return not False in test
 
     def _getAllClasses(self, X):
         """
@@ -77,7 +76,7 @@ class SimpleSVClustering:
                 unvisited = unvisitedNew
                 i += 1
             clusters.append(c)
-        
+
         #3: group components by classification
         classifications = numpy.zeros(len(X))-1
         for i in range(len(clusters)):
@@ -151,12 +150,14 @@ class SimpleSVClustering:
         """
         if (len(X.shape) < 2):
             X = X.reshape((1,-1))
-        clss = numpy.zeros(len(X))
-        for i in range(len(X)):
-            clss[i] += self.kernel(* ((X[i,:],X[i,:])), **self.kwargs)
-            for j in range(len(self.sv)):
-                clss[i] -= 2 * self.a[j] * self.kernel(* ((self.sv[j,:],X[i,:])), **self.kwargs)
-                
+        clss = None
+        if X.shape[0] > 1:
+            clss = self.kernel(* ((X,X)), **self.kwargs)
+        else:
+            clss = [self.kernel(* ((X,X)), **self.kwargs)]
+        for i in range(X.shape[0]):
+            clss[i] -= 2 * sum(self.a * self.kernel(* ((self.sv,numpy.repeat(X[i,:].reshape((1,-1)),len(self.sv),0))), **self.kwargs))
+
         return (clss+self.bOffset)**0.5
 
     def predict(self, X):
@@ -164,25 +165,24 @@ class SimpleSVClustering:
         Predict classes for data X.
         NOTE: this should really be done with either the fitting data or a superset of the fitting data.
         """
-
         return self._getAllClasses(X)
-
 
 if __name__ == '__main__':
     import sklearn.datasets
-    data,labels = sklearn.datasets.make_moons(400,noise=0.01,random_state=0)
+    data,labels = sklearn.datasets.make_moons(400,noise=0.1,random_state=0)
     data -= numpy.mean(data,axis=0)
 
     #parameters can be sensitive, these ones work for two moons
     C = 0.1
-    clss = SimpleSVClustering(C,1e-10,rbfKernel,(3.5,))
+    clss = SimpleSVClustering(C,1e-10,rbfKernel,gamma=5.5)
+    #clss = SimpleSVClustering(C,1e-10,polyKernel,pwr=4.5)
     clss.fit(data)
 
     #check assigned classes for the two moons as a classification error
     t = clss.predict(data)
     print ("Error", numpy.sum((labels-t)**2) / float(len(data)))
-    
-    
+
+
     from matplotlib import pyplot
 
     #generate a heatmap and display classified clusters.
@@ -195,6 +195,5 @@ if __name__ == '__main__':
     data += 50.
     pyplot.scatter(data[t==0,0],data[t==0,1],c='r')
     pyplot.scatter(data[t==1,0],data[t==1,1],c='b')
-
-    pyplot.show()
-    
+    pyplot.savefig("out.png")
+    #pyplot.show()
