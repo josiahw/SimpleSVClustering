@@ -4,13 +4,31 @@ Created on Mon Jul 11 20:40:56 2016
 
 @author: josiahw
 """
-import numpy
-import numpy.linalg
+import numpy, time, numpy.linalg
+from scipy.spatial.distance import cdist
+from scipy.optimize import linear_sum_assignment
+from scipy.interpolate import interp1d
+
+def _emd(a,b):
+    d = cdist(a, b)
+    assignment = linear_sum_assignment(d)
+    return d[assignment].sum() / len(a)
+
+def emdKernel(a,b, dim = 1):
+    """
+    N-dimensional earth-movers distance kernel
+    """
+    if len(a.shape) == dim+1:
+        return numpy.array([_emd(a[i,:], b[i,:]) for i in range(a.shape[0])])
+    return _emd(a,b)
 
 def polyKernel(a,b,pwr):
     return numpy.dot(a,b.T)**pwr
 
 def rbfKernel(a,b,gamma):
+    """
+    1-dimensional rbf kernel
+    """
     if len(a.shape) == 2:
         return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=1))
     return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=0))
@@ -42,15 +60,19 @@ class SimpleSVClustering:
         self.kernel = kernel
         self.tolerance = tolerance
         self.kwargs = kwargs
+        self.dims = 1
+        if "dims" in self.kwargs:
+            self.dims = dims
 
-    def _checkClass(self, a, b, n_checks = 8):
+    def _checkClass(self, a, b, a_pred = None, b_pred = None, n_checks = 4):
         """
         This does a straight line interpolation between a and b, using n_checks number of segments.
         It returns True if a and b are connected by a high probability region, false otherwise.
-        NOTE: authors originally suggested 20 segments but that is SLOOOOOW, so we use 5. In practice it is pretty good.
+        NOTE: authors originally suggested 20 segments but that is SLOOOOOW, so we use 4. In practice it is pretty good.
         """
-        for i in numpy.arange(1.0/n_checks,1.0,1.0/n_checks):
-            if self._predict(i*a + (1-i)*b) > self.b:
+        step_size = 1.0/(n_checks+2)
+        for i in numpy.arange(step_size,1.0-step_size,step_size):
+            if self._predict_density(i*a + (1-i)*b) > self.b:
                 return False
         return True
 
@@ -78,11 +100,11 @@ class SimpleSVClustering:
             clusters.append(c)
 
         #3: group components by classification
-        classifications = numpy.zeros(len(X))-1
+        self.classifications = numpy.zeros(len(X))-1
         for i in range(len(clusters)):
             for c in clusters[i]:
-                classifications[c] = i
-        return classifications
+                self.classifications[c] = i
+        return self.classifications
 
     def fit(self, X):
         """
@@ -92,6 +114,7 @@ class SimpleSVClustering:
         """
         Construct the Q matrix for solving
         """
+        self._data = X # TODO: do we need
         Q = numpy.zeros((len(X),len(X)))
         for i in range(len(X)):
             for j in range(i,len(X)):
@@ -123,63 +146,80 @@ class SimpleSVClustering:
         self.sv = X[self.a >= self.C/100., :]
         self.a = (self.a)[self.a >= self.C/100.]
 
-        #Do an all-pairs contour check
-
         #calculate the contribution of all SVs
-        for i in range(len(self.a)):
-            for j in range(len(self.a)):
-                Qshrunk[i,j] *= self.a[i]*self.a[j]
+        Qshrunk *= numpy.dot(self.a.reshape((-1,1)),self.a.reshape((1,-1)))
 
         #this is needed for radius calculation apparently
-        self.bOffset = numpy.sum(numpy.sum(Qshrunk))
+        self.bOffset = numpy.sum(Qshrunk.ravel())
         if self.verbose:
             print ("Number of support vectors:", len(self.a))
 
         """
         Select support vectors and solve for b to get the final classifier
         """
-        self.b = numpy.mean(self._predict(self.sv))
-
+        self.b = numpy.mean(self._predict_density(self.sv))
 
         if self.verbose:
             print ("Bias value:", self.b)
 
-    def _predict(self, X):
+        """
+        Assign clusters to training dataset
+        """
+        t0 = time.time()
+        self._getAllClasses(self.sv)
+        if self.verbose:
+            print(f"Clusters assigned in {t0-time.time()}s")
+
+    def _predict_density(self, X):
         """
         For SVClustering, we need to calculate radius rather than bias.
         """
-        if (len(X.shape) < 2):
+        if (len(X.shape) < self.dims+1):
             X = X.reshape((1,-1))
         clss = None
-        if X.shape[0] > 1:
+        if X.shape[0] > self.dims:
             clss = self.kernel(* ((X,X)), **self.kwargs)
         else:
-            clss = [self.kernel(* ((X,X)), **self.kwargs)]
+            clss = numpy.array([self.kernel(* ((X,X)), **self.kwargs)])
         for i in range(X.shape[0]):
             clss[i] -= 2 * sum(self.a * self.kernel(* ((self.sv,numpy.repeat(X[i,:].reshape((1,-1)),len(self.sv),0))), **self.kwargs))
 
         return (clss+self.bOffset)**0.5
 
+    def _predict(self, X):
+        """
+        Predict class for a single sample of data
+        """
+        for i in range(self.sv.shape[0]):
+            if self._checkClass(X,self.sv[i,:]):
+                return self.classifications[i]
+        return -1
+
     def predict(self, X):
         """
-        Predict classes for data X.
-        NOTE: this should really be done with either the fitting data or a superset of the fitting data.
+        Predict classes for out of sample data X
         """
-        return self._getAllClasses(X)
+        if len(X.shape) > self.dims:
+            return numpy.array([self._predict(X[i,:]) for i in range(X.shape[0])])
+        return self._predict(X)
+
 
 if __name__ == '__main__':
-    import sklearn.datasets
-    data,labels = sklearn.datasets.make_moons(400,noise=0.1,random_state=0)
+    import sklearn.datasets, time
+    data,labels = sklearn.datasets.make_moons(1000,noise=0.08,random_state=0)
     data -= numpy.mean(data,axis=0)
 
     #parameters can be sensitive, these ones work for two moons
     C = 0.1
-    clss = SimpleSVClustering(C,1e-10,rbfKernel,gamma=5.5)
-    #clss = SimpleSVClustering(C,1e-10,polyKernel,pwr=4.5)
+    clss = SimpleSVClustering(C,1e-10,rbfKernel,gamma=7.5)
+    t0 = time.time()
     clss.fit(data)
+    print(f"fit in {time.time()-t0} seconds")
 
     #check assigned classes for the two moons as a classification error
+    t0 = time.time()
     t = clss.predict(data)
+    print(f"predicted in {time.time()-t0} seconds")
     print ("Error", numpy.sum((labels-t)**2) / float(len(data)))
 
 
@@ -189,7 +229,7 @@ if __name__ == '__main__':
     a = numpy.zeros((100,100))
     for i in range(100):
         for j in range(100):
-            a[j,i] = clss._predict(numpy.array([i*4/100.-2,j*4/100.-2]))
+            a[j,i] = clss._predict_density(numpy.array([i*4/100.-2,j*4/100.-2]))
     pyplot.imshow(a, cmap='hot', interpolation='nearest')
     data *= 25.
     data += 50.
