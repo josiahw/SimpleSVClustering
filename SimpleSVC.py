@@ -29,8 +29,6 @@ def rbfKernel(a,b,gamma):
     """
     1-dimensional rbf kernel
     """
-    #if len(a.shape) == 2:
-    #    return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=-1))
     return numpy.exp(-gamma * numpy.linalg.norm(a - b, axis=-1))
 
 class SimpleSVClustering:
@@ -117,6 +115,9 @@ class SimpleSVClustering:
         return self.classifications
 
     def fit_incremental(self, X, chunk_size = 2000):
+        """
+        fit data for SVM, using chunk_size points at a time and keeping previous support vectors
+        """
         if X.shape[0] <= chunk_size:
             self.fit(X)
             return
@@ -180,7 +181,6 @@ class SimpleSVClustering:
         self.sv = X[self.a >= self.C/100., :]
         Qshrunk = Q[self.a >= self.C/100.,:][:,self.a >= self.C/100.]
         if self.incremental:
-            # TODO: figure out what to save for incrementals
             self.Qshrunk = Qshrunk
             return
         self.a = (self.a)[self.a >= self.C/100.]
@@ -188,8 +188,7 @@ class SimpleSVClustering:
         #calculate the contribution of all SVs
         Qshrunk *= numpy.dot(self.a.reshape((-1,1)),self.a.reshape((1,-1)))
 
-
-        #this is needed for radius calculation apparently
+        #this is needed for radius calculation
         self.bOffset = numpy.sum(Qshrunk.ravel())
         if self.verbose:
             print ("Number of support vectors:", len(self.a))
