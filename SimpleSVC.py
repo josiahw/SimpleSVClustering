@@ -9,19 +9,6 @@ from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 from scipy.interpolate import interp1d
 
-def _emd(a,b):
-    d = cdist(a, b)
-    assignment = linear_sum_assignment(d)
-    return d[assignment].sum() / len(a)
-
-def emdKernel(a,b, dim = 1):
-    """
-    N-dimensional earth-movers distance kernel
-    """
-    if len(a.shape) == dim+1:
-        return numpy.array([_emd(a[i,:], b[i,:]) for i in range(a.shape[0])])
-    return _emd(a,b)
-
 def polyKernel(a,b,pwr):
     return numpy.dot(a,b.T)**pwr
 
