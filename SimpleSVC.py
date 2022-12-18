@@ -56,7 +56,7 @@ class SimpleSVClustering:
         """
         This does a straight line interpolation between a and b, using n_checks number of segments.
         It returns True if a and b are connected by a high probability region, false otherwise.
-        NOTE: authors originally suggested 20 segments but that is SLOOOOOW, so we use 3. In practice it is pretty good.
+        NOTE: authors originally suggested 20 segments but that is SLOOOOOW, so we use 4. In practice it is pretty good.
         """
         evals = numpy.array([self._predict_density(s * a + (1-s) * b) for s in steps])
         return numpy.amax(evals, axis=0)
@@ -90,6 +90,8 @@ class SimpleSVClustering:
             clusters.append(c)
             if self.verbose:
                 print(f"Clustered {len(X)-len(unvisited)}/{len(X)} in {time.time()-t0}")
+        # sort so largest clusters have the lowest index - allows us to easily remove outlier clusters later
+        clusters.sort(key=len, reverse=True)
 
         #3: group components by classification
         self.classifications = numpy.zeros(len(X))
@@ -101,7 +103,7 @@ class SimpleSVClustering:
             print(f"Cluster sizes: {[len(c) for c in clusters]}")
         return self.classifications
 
-    def fit_incremental(self, X, chunk_size = 2000):
+    def fit_incremental(self, X, chunk_size = 5000):
         """
         fit data for SVM, using chunk_size points at a time and keeping previous support vectors
         """
@@ -205,7 +207,7 @@ class SimpleSVClustering:
             X = X.reshape((1,-1))
         clss = self.kernel(X, X, **self.kwargs)
         for i in range(X.shape[0]):
-            clss[i] -= 2 * numpy.sum(self.a * self.kernel(X[i,:], self.sv, **self.kwargs))
+            clss[i] -= 2 * numpy.sum(self.a * self.kernel(X[i].reshape((1,-1)), self.sv, **self.kwargs))
 
         return (clss+self.bOffset)**0.5
 
@@ -215,18 +217,21 @@ class SimpleSVClustering:
         """
         step_size = 1.0/(self.class_check_steps+1)
         steps = numpy.arange(step_size,1.0-step_size,step_size, dtype=X.dtype)
-        for i in range(self.sv.shape[0]):
-            score = self._checkClass(X,self.sv[i,:], steps)
-            if score < self.b:
-                return self.classifications[i]
-        return -1
+        if len(X.shape) < 2:
+            X = [X]
+        classes = numpy.zeros(len(X), dtype=numpy.int64)-1
+        for j in range(len(X)):
+            for i in range(len(self.sv)):
+                vals = self._checkClass(X[j], self.sv[i], steps)
+                if vals[0] < self.b:
+                    classes[j] = self.classifications[i]
+                    break
+        return classes
 
     def predict(self, X):
         """
         Predict classes for out of sample data X
-        """        
-        if len(X.shape) > self.dims:
-            return numpy.array([self._predict(X[i,:]) for i in range(X.shape[0])])
+        """
         return self._predict(X)
 
 
@@ -237,7 +242,7 @@ if __name__ == '__main__':
 
     #parameters can be sensitive, these ones work for two moons
     C = 0.1
-    clss = SimpleSVClustering(C,1e-8,numpy.float32,rbfKernel,gamma=12.5)
+    clss = SimpleSVClustering(C,1e-9,numpy.float32,rbfKernel,gamma=10.5)
     t0 = time.time()
     clss.fit_incremental(data)
     print(f"fit in {time.time()-t0} seconds")
